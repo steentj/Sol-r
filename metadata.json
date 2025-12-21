@@ -1,0 +1,7 @@
+{
+  "name": "Solar Year Visualizer",
+  "description": "Visualizes daylight hours, sunrise, and sunset times for your location throughout the year.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
