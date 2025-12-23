@@ -122,7 +122,7 @@ const App: React.FC = () => {
   const yearOptions = Array.from({ length: 21 }, (_, i) => new Date().getFullYear() - 10 + i);
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 text-slate-800 font-sans">
+    <div className="flex flex-col h-full bg-slate-50 text-slate-800 font-sans overflow-hidden">
       {/* Header */}
       <header className="flex-none bg-white border-b border-slate-200 shadow-sm z-10 p-2 md:p-4 px-4 md:px-8">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
@@ -213,7 +213,7 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 relative w-full h-full overflow-hidden p-2 md:p-6 lg:p-8">
+      <main className="flex-1 flex flex-col relative w-full min-h-0 overflow-hidden p-2 md:p-6 lg:p-8">
         
         {location.loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm z-20">
@@ -243,15 +243,14 @@ const App: React.FC = () => {
         )}
 
         {location.coords && !location.loading && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 w-full h-full flex flex-col overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 w-full flex-1 flex flex-col min-h-0 overflow-hidden">
              <div className="flex-none p-4 border-b border-slate-100 flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full" style={{ backgroundColor: currentThemeObj.primary }}></div>
                   <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">{t.daylightHours}</span>
                 </div>
-                {/* Removed static hover instruction, replaced by date selector presence implicitly */}
              </div>
-             <div className="flex-1 p-2 md:p-4 min-h-0">
+             <div className="flex-1 p-2 md:p-4 min-h-0 flex flex-col">
                <SunChart 
                  year={currentYear} 
                  latitude={location.coords.lat} 
@@ -260,6 +259,7 @@ const App: React.FC = () => {
                  locale={lang}
                  tooltipLabels={t.tooltip}
                  selectedDateStr={selectedDateStr}
+                 onDateChange={setSelectedDateStr}
                />
              </div>
           </div>

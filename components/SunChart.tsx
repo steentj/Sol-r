@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -6,9 +6,8 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
-  TooltipProps,
-  ReferenceLine
+  ReferenceLine,
+  Tooltip
 } from 'recharts';
 import { getSunTimes } from '../utils/solarCalc';
 
@@ -34,11 +33,14 @@ interface SunChartProps {
   locale: string;
   tooltipLabels: TooltipLabels;
   selectedDateStr: string;
+  onDateChange: (dateStr: string) => void;
 }
 
 interface DataPoint {
   dateStr: string;
   displayDate: string;
+  monthName: string;
+  monthNumber: string;
   fullDate: Date;
   // Use minutes from midnight for simpler Y-axis handling
   sunriseMinutes: number | null;
@@ -53,38 +55,6 @@ const formatTime = (minutes: number | null) => {
   const h = Math.floor(minutes / 60);
   const m = Math.floor(minutes % 60);
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-};
-
-const CustomTooltip = ({ active, payload, label, themeTextColor, labels }: any) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload as DataPoint;
-    const sunrise = data.sunriseMinutes;
-    const sunset = data.sunsetMinutes;
-    const lengthMinutes = (sunset !== null && sunrise !== null) ? sunset - sunrise : 0;
-    const lengthHours = Math.floor(lengthMinutes / 60);
-    const lengthMinsRemainder = Math.floor(lengthMinutes % 60);
-
-    return (
-      <div className="bg-white/95 border border-slate-200 p-3 rounded-lg shadow-xl text-sm backdrop-blur-sm z-50">
-        <p className="font-bold text-slate-800 mb-2 border-b border-slate-100 pb-1">{data.displayDate}</p>
-        <div className="space-y-1">
-          <p className="flex justify-between gap-4" style={{ color: themeTextColor }}>
-            <span>{labels.sunrise}</span>
-            <span className="font-mono font-medium">{formatTime(sunrise)}</span>
-          </p>
-          <p className="text-slate-600 flex justify-between gap-4">
-            <span>{labels.sunset}</span>
-            <span className="font-mono font-medium">{formatTime(sunset)}</span>
-          </p>
-          <p className="text-slate-500 flex justify-between gap-4 mt-2 pt-2 border-t border-slate-100">
-            <span>{labels.daylight}</span>
-            <span className="font-mono">{lengthHours}h {lengthMinsRemainder}m</span>
-          </p>
-        </div>
-      </div>
-    );
-  }
-  return null;
 };
 
 // Component to display static info for selected date
@@ -120,7 +90,20 @@ const InfoDashboard = ({ data, theme, labels }: { data: DataPoint | undefined, t
   );
 };
 
-const SunChart: React.FC<SunChartProps> = ({ year, latitude, longitude, theme, locale, tooltipLabels, selectedDateStr }) => {
+const SunChart: React.FC<SunChartProps> = ({ year, latitude, longitude, theme, locale, tooltipLabels, selectedDateStr, onDateChange }) => {
+  // Use ref to track dragging state
+  const isDragging = useRef(false);
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+
+  useEffect(() => {
+    // Check for mobile width (using 640px as standard "sm" breakpoint)
+    const mq = window.matchMedia('(max-width: 640px)');
+    setIsSmallScreen(mq.matches);
+    
+    const handler = (e: MediaQueryListEvent) => setIsSmallScreen(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
   
   const data = useMemo(() => {
     const days: DataPoint[] = [];
@@ -129,6 +112,7 @@ const SunChart: React.FC<SunChartProps> = ({ year, latitude, longitude, theme, l
 
     // Use passed locale for formatting dates
     const dateFormatter = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' });
+    const monthFormatter = new Intl.DateTimeFormat(locale, { month: 'short' });
 
     for (let i = 0; i < dayCount; i++) {
       const date = new Date(year, 0, i + 1); // Jan is month 0
@@ -144,9 +128,17 @@ const SunChart: React.FC<SunChartProps> = ({ year, latitude, longitude, theme, l
         daylightRange = [sunriseMinutes, sunsetMinutes];
       }
 
+      // Generate date string manually in local time to match input[type="date"] format (YYYY-MM-DD)
+      const yStr = date.getFullYear();
+      const mStr = String(date.getMonth() + 1).padStart(2, '0');
+      const dStr = String(date.getDate()).padStart(2, '0');
+      const localDateStr = `${yStr}-${mStr}-${dStr}`;
+
       days.push({
-        dateStr: date.toISOString().split('T')[0],
+        dateStr: localDateStr,
         displayDate: dateFormatter.format(date),
+        monthName: monthFormatter.format(date),
+        monthNumber: String(date.getMonth() + 1),
         fullDate: date,
         sunriseMinutes,
         sunsetMinutes,
@@ -174,11 +166,60 @@ const SunChart: React.FC<SunChartProps> = ({ year, latitude, longitude, theme, l
   const xTicks = useMemo(() => {
     return data
       .filter(d => d.fullDate.getDate() === 1)
-      .map(d => d.displayDate);
+      .map(d => d.dateStr);
   }, [data]);
 
+  const formatXTick = (value: string) => {
+    const point = data.find(d => d.dateStr === value);
+    if (!point) return '';
+    return isSmallScreen ? point.monthNumber : point.monthName;
+  };
+
+  // Interaction handlers
+  const handleInteraction = (state: any) => {
+    if (!state) return;
+
+    let dateStr: string | undefined;
+
+    // 1. Try to get data from the specific bar being hovered
+    if (state.activePayload && state.activePayload.length) {
+      dateStr = state.activePayload[0].payload.dateStr;
+    } 
+    // 2. Fallback: If we are over the chart area but not exactly on a bar (e.g. gaps),
+    // Recharts often provides the activeLabel (the X-axis value).
+    // Since XAxis dataKey is "dateStr", activeLabel IS the dateStr.
+    else if (state.activeLabel) {
+      dateStr = state.activeLabel;
+    }
+
+    if (dateStr && dateStr !== selectedDateStr) {
+      onDateChange(dateStr);
+    }
+  };
+
+  const handleMouseDown = (state: any) => {
+    isDragging.current = true;
+    handleInteraction(state);
+  };
+
+  const handleMouseMove = (state: any) => {
+    if (isDragging.current) {
+      handleInteraction(state);
+    }
+  };
+
+  const handleMouseUp = () => {
+    isDragging.current = false;
+  };
+  
+  const handleMouseLeave = () => {
+    // We don't strictly stop dragging on leave to allow for small slips,
+    // but typically if mouse leaves the container, events stop firing anyway.
+    isDragging.current = false;
+  };
+
   return (
-    <div className="w-full h-full flex flex-col">
+    <div className="w-full h-full flex flex-col min-h-0">
       {/* Persistent Dashboard for Selected Date */}
       <div className="flex-none bg-slate-50 border-b border-slate-100 p-2 md:px-4 min-h-[40px] flex items-center">
          {selectedData ? (
@@ -188,62 +229,77 @@ const SunChart: React.FC<SunChartProps> = ({ year, latitude, longitude, theme, l
          )}
       </div>
 
-      <div className="flex-1 min-h-0 select-none pt-2">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart
-            data={data}
-            margin={{ top: 10, right: 30, left: 0, bottom: 20 }}
-            barCategoryGap={0}
-            barGap={0}
-          >
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-            <XAxis 
-              dataKey="displayDate" 
-              tick={{ fill: '#64748b', fontSize: 12 }}
-              ticks={xTicks}
-              interval={0}
-              stroke="#94a3b8"
-            />
-            <YAxis 
-              domain={[0, 1440]} 
-              ticks={yTicks}
-              tickFormatter={formatTime}
-              tick={{ fill: '#64748b', fontSize: 12 }}
-              stroke="#94a3b8"
-              width={60}
-            />
-            <Tooltip 
-              content={<CustomTooltip themeTextColor={theme.text} labels={tooltipLabels} />} 
-              cursor={{ fill: '#f1f5f9', opacity: 0.5 }} 
-            />
-            
-            <ReferenceLine y={12 * 60} stroke="#cbd5e1" strokeDasharray="3 3" />
-            
-            {/* Highlight the selected date */}
-            {selectedData && (
-              <ReferenceLine 
-                x={selectedData.displayDate} 
-                stroke={theme.text} 
-                strokeDasharray="2 2"
-                strokeOpacity={0.6}
+      {/* Chart Container using Absolute Positioning Fix for Recharts */}
+      <div className="flex-1 min-h-0 relative w-full">
+        <div className="absolute inset-0 pt-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={data}
+              margin={{ top: 10, right: 30, left: 0, bottom: 40 }}
+              barCategoryGap={0}
+              barGap={0}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onTouchStart={handleMouseDown}
+              onTouchMove={handleMouseMove}
+              onTouchEnd={handleMouseUp}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+              <XAxis 
+                dataKey="dateStr" 
+                tick={{ fill: '#64748b', fontSize: 12 }}
+                tickFormatter={formatXTick}
+                ticks={xTicks}
+                interval={0}
+                stroke="#94a3b8"
               />
-            )}
-            
-            <Bar 
-              dataKey="daylightRange" 
-              fill={`url(#gradient-${theme.key})`}
-              radius={[2, 2, 2, 2]}
-              minPointSize={2}
-            />
-            
-            <defs>
-              <linearGradient id={`gradient-${theme.key}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={theme.primary} stopOpacity={0.9}/>
-                <stop offset="100%" stopColor={theme.secondary} stopOpacity={0.9}/>
-              </linearGradient>
-            </defs>
-          </BarChart>
-        </ResponsiveContainer>
+              <YAxis 
+                domain={[0, 1440]} 
+                ticks={yTicks}
+                tickFormatter={formatTime}
+                tick={{ fill: '#64748b', fontSize: 12 }}
+                stroke="#94a3b8"
+                width={60}
+              />
+              
+              <ReferenceLine y={12 * 60} stroke="#cbd5e1" strokeDasharray="3 3" />
+              
+              {/* Highlight the selected date */}
+              {selectedData && (
+                <ReferenceLine 
+                  x={selectedData.dateStr} 
+                  stroke={theme.text} 
+                  strokeDasharray="2 2"
+                  strokeWidth={2}
+                />
+              )}
+              
+              {/* Empty tooltip to render the cursor/brush but no content */}
+              <Tooltip 
+                content={<></>} 
+                cursor={{ fill: '#f1f5f9', opacity: 0.5 }} 
+                isAnimationActive={false}
+              />
+
+              <Bar 
+                dataKey="daylightRange" 
+                fill={`url(#gradient-${theme.key})`}
+                radius={[2, 2, 2, 2]}
+                minPointSize={2}
+                isAnimationActive={false}
+              />
+              
+              <defs>
+                <linearGradient id={`gradient-${theme.key}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={theme.primary} stopOpacity={0.9}/>
+                  <stop offset="100%" stopColor={theme.secondary} stopOpacity={0.9}/>
+                </linearGradient>
+              </defs>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     </div>
   );

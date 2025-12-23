@@ -46,8 +46,8 @@ export const translations = {
       slate: "Blæk"
     },
     tooltip: {
-      sunrise: "Solopgang:",
-      sunset: "Solnedgang:",
+      sunrise: "Sol op:",
+      sunset: "Sol ned:",
       daylight: "Dagslys:"
     }
   }
